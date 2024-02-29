@@ -129,7 +129,7 @@ class BaseSingleAgentAviary(BaseAviary):
             A Box() of size 1, 3, 4, or 6 depending on the action type.
 
         """
-        if self.ACT_TYPE in [ActionType.RPM, ActionType.VEL]:
+        if self.ACT_TYPE in [ActionType.RPM, ActionType.VEL, ActionType.TRPY]:
             size = 4
         elif self.ACT_TYPE == ActionType.PID:
             size = 3

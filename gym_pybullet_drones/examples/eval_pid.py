@@ -22,10 +22,10 @@ from stable_baselines3 import PPO, SAC, TD3, A2C
 
 from gym_pybullet_drones.utils.Logger import Logger
 from gym_pybullet_drones.envs.single_agent_rl.HoverAviary import HoverAviary
+from gym_pybullet_drones.envs.single_agent_rl.BaseSingleAgentAviary import ActionType
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from sbx import TD3 as TD3X
 
 DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
@@ -34,28 +34,12 @@ DEFAULT_COLAB = False
 
 def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO):
 
-    #### Check the environment's spaces ########################
-    # env = make_vec_env("hover-aviary-v0", n_envs=4, vec_env_cls=SubprocVecEnv, env_kwargs={'curriculum_stage': 1})
-    env = gym.make('hover-aviary-v0')
-    print("[INFO] Action space:", env.action_space)
-    print("[INFO] Observation space:", env.observation_space)
-
-    #### Train the model #######################################
-    model = TD3X("MlpPolicy",
-                env,
-                verbose=1,
-                tensorboard_log="./log/tensorboard/",
-                device='cpu',
-                # batch_size= 256,
-                # learning_rate=3e-4,
-                gamma=0.97,
-                )
-    model.learn(total_timesteps=3000000) # Typically not enough
-    model.save('sac2')
+    model = A2C.load('a2c')
 
     #### Show (and record a video of) the model's performance ##
     env = HoverAviary(gui=gui,
-                      record=record_video
+                      record=record_video,
+                      act= ActionType.PID
                      )
     logger = Logger(logging_freq_hz=int(env.CTRL_FREQ),
                     num_drones=1,
@@ -68,6 +52,7 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
         action, _states = model.predict(obs,
                                         deterministic=True
                                         )
+        # action = env.goal
         obs, reward, terminated, truncated, info = env.step(action)
         logger.log(drone=0,
                    timestamp=i/env.CTRL_FREQ,
@@ -75,10 +60,11 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
                    control=np.zeros(12)
                    )
         env.render()
+        time.sleep(0.1)
         print(terminated)
         sync(i, start, env.CTRL_TIMESTEP)
         if terminated:
-            obs = env.reset(seed=42, options={})
+            obs, _ = env.reset(seed=42, options={})
     env.close()
 
     if plot:

@@ -37,6 +37,7 @@ class ActionType(Enum):
     RPM = "rpm"                 # RPMS
     PID = "pid"                 # PID control
     VEL = "vel"                 # Velocity input (using PID control)
+    TRPY = "trpy"               # Velocity input (using PID control)
     ONE_D_RPM = "one_d_rpm"     # 1D (identical input to all motors) with RPMs
     ONE_D_PID = "one_d_pid"     # 1D (identical input to all motors) with PID control
 
