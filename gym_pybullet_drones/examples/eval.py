@@ -26,6 +26,7 @@ from gym_pybullet_drones.envs.single_agent_rl.BaseSingleAgentAviary import Actio
 from gym_pybullet_drones.utils.utils import sync, str2bool
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
+from sbx import TQC
 
 DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
@@ -34,12 +35,12 @@ DEFAULT_COLAB = False
 
 def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO):
 
-    model = A2C.load('a2c')
+    model = TQC.load('models/tqc_rew_tune.zip')
 
     #### Show (and record a video of) the model's performance ##
     env = HoverAviary(gui=gui,
                       record=record_video,
-                      act= ActionType.PID
+                      act= ActionType.TRPY
                      )
     logger = Logger(logging_freq_hz=int(env.CTRL_FREQ),
                     num_drones=1,
