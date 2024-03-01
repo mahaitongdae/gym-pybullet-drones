@@ -26,6 +26,7 @@ from gym_pybullet_drones.utils.utils import sync, str2bool
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from sbx import TD3 as TD3X
+from sbx import TQC
 
 DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
@@ -41,7 +42,7 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
     print("[INFO] Observation space:", env.observation_space)
 
     #### Train the model #######################################
-    model = TD3X("MlpPolicy",
+    model = TQC("MlpPolicy",
                 env,
                 verbose=1,
                 tensorboard_log="./log/tensorboard/",
@@ -50,8 +51,8 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
                 # learning_rate=3e-4,
                 gamma=0.97,
                 )
-    model.learn(total_timesteps=3000000) # Typically not enough
-    model.save('sac2')
+    model.learn(total_timesteps=200000) # Typically not enough
+    model.save('tqc_rew_tune')
 
     #### Show (and record a video of) the model's performance ##
     env = HoverAviary(gui=gui,

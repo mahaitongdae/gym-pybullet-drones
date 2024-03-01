@@ -1,4 +1,5 @@
 import numpy as np
+import pybullet as p
 
 from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.single_agent_rl.BaseSingleAgentAviary import ActionType, ObservationType, BaseSingleAgentAviary
@@ -26,7 +27,7 @@ class HoverAviary(BaseSingleAgentAviary):
                  record=False,
                  obs: ObservationType=ObservationType.KIN,
                  act: ActionType=ActionType.TRPY,
-                 curriculum_stage = 1,
+                 curriculum_stage = 2,
                  ):
         """Initialization of a single agent RL environment.
 
@@ -58,14 +59,17 @@ class HoverAviary(BaseSingleAgentAviary):
         """
         np.random.seed(0)
         self.goal = np.array([0., 0., 1.])
-        init_xyz = np.random.normal(0., 0.02, [3,])
-        init_xyz = self.goal + init_xyz
-        init_xyz = init_xyz[np.newaxis, :]
-        init_rpy = np.random.normal(0., 5./180.*np.pi, [3])
-        init_rpy = init_rpy[np.newaxis, :]
+        if initial_xyzs is None:
+            initial_xyzs = np.random.normal(0., 0.02, [3,])
+            initial_xyzs = self.goal + initial_xyzs
+            initial_xyzs = initial_xyzs[np.newaxis, :]
+        if initial_rpys is None:
+            initial_rpys = np.random.normal(0., 5./180.*np.pi, [3])
+            initial_rpys = initial_rpys[np.newaxis, :]
+
         super().__init__(drone_model=drone_model,
-                         initial_xyzs=init_xyz,
-                         initial_rpys=init_rpy,
+                         initial_xyzs=initial_xyzs,
+                         initial_rpys=initial_rpys,
                          physics=physics,
                          pyb_freq=pyb_freq,
                          ctrl_freq=ctrl_freq,
@@ -114,8 +118,12 @@ class HoverAviary(BaseSingleAgentAviary):
         if self.curriculum_stage == 1:
             return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
         elif self.curriculum_stage == 2:
-            return 1 + 0.2 * (-1 * np.linalg.norm(self.goal-state[0:3])**2
-                              - 1 * np.linalg.norm(state[13:16])**2)
+            return 2 + (- 2.5 * np.linalg.norm(self.goal-state[0:3]) # pos error
+                        - 2.5 * np.linalg.norm(state[7:10])          # rpy
+                        - 0.005 * np.linalg.norm(state[10:13])          # linear velocity
+                        - 0. * np.linalg.norm(state[13:16])           # angular velocity
+                        - 0.01 * np.linalg.norm(state[16:20] / self.MAX_RPM)
+                        )
 
     ################################################################################
     
@@ -305,4 +313,45 @@ class HoverAviary(BaseSingleAgentAviary):
             return rpm
         else:
             print("[ERROR] in BaseSingleAgentAviary._preprocessAction()")
+
+    def reset(self,
+              seed : int = None,
+              options : dict = None):
+        """Resets the environment.
+
+        Parameters
+        ----------
+        seed : int, optional
+            Random seed.
+        options : dict[..], optional
+            Additinonal options, unused
+
+        Returns
+        -------
+        ndarray | dict[..]
+            The initial observation, check the specific implementation of `_computeObs()`
+            in each subclass for its format.
+        dict[..]
+            Additional information as a dictionary, check the specific implementation of `_computeInfo()`
+            in each subclass for its format.
+
+        """
+
+        # TODO : initialize random number generator with seed
+
+        np.random.seed(seed)
+        self.INIT_XYZS = (np.random.normal(0., 0.02, [3,]) + self.goal)[np.newaxis, :]
+        self.INIT_RPYS = np.random.normal(0., 5./180.*np.pi, [3])[np.newaxis, :]
+
+        p.resetSimulation(physicsClientId=self.CLIENT)
+        #### Housekeeping ##########################################
+        self._housekeeping()
+        #### Update and store the drones kinematic information #####
+        self._updateAndStoreKinematicInformation()
+        #### Start video recording #################################
+        self._startVideoRecording()
+        #### Return the initial observation ########################
+        initial_obs = self._computeObs()
+        initial_info = self._computeInfo()
+        return initial_obs, initial_info
 
