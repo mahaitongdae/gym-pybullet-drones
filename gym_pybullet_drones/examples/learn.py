@@ -18,7 +18,7 @@ import time
 import argparse
 import gymnasium as gym
 import numpy as np
-from stable_baselines3 import PPO, SAC, TD3, A2C
+from stable_baselines3 import PPO,  TD3, A2C
 
 from gym_pybullet_drones.utils.Logger import Logger
 from gym_pybullet_drones.envs.single_agent_rl.HoverAviary import HoverAviary
@@ -26,7 +26,8 @@ from gym_pybullet_drones.utils.utils import sync, str2bool
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from sbx import TD3 as TD3X
-from sbx import TQC
+from sbx import TQC, SAC
+from stable_baselines3.common.callbacks import BaseCallback
 
 DEFAULT_GUI = True
 DEFAULT_RECORD_VIDEO = False
@@ -37,7 +38,9 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
 
     #### Check the environment's spaces ########################
     # env = make_vec_env("hover-aviary-v0", n_envs=4, vec_env_cls=SubprocVecEnv, env_kwargs={'curriculum_stage': 1})
-    env = gym.make('hover-aviary-v0')
+    env_name = 'hover-aviary-v0'
+    exp_name = 'v0_low_freq'
+    env = gym.make(env_name, ctrl_freq = 60)
     print("[INFO] Action space:", env.action_space)
     print("[INFO] Observation space:", env.observation_space)
 
@@ -45,45 +48,58 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
     model = TQC("MlpPolicy",
                 env,
                 verbose=1,
-                tensorboard_log="./log/tensorboard/",
+                tensorboard_log="./log/tensorboard/{}/".format(env_name),
                 device='cpu',
-                # batch_size= 256,
-                # learning_rate=3e-4,
-                gamma=0.97,
+                # learning_rate=1e-3,
+                # qf_learning_rate=1e-3,
                 )
-    model.learn(total_timesteps=200000) # Typically not enough
-    model.save('tqc_rew_tune')
+    model.learn(total_timesteps=500000) # Typically not enough
+    model.save(exp_name)
 
-    #### Show (and record a video of) the model's performance ##
-    env = HoverAviary(gui=gui,
-                      record=record_video
-                     )
-    logger = Logger(logging_freq_hz=int(env.CTRL_FREQ),
-                    num_drones=1,
-                    output_folder=output_folder,
-                    colab=colab
-                    )
-    obs, info = env.reset(seed=42, options={})
-    start = time.time()
-    for i in range(3*env.CTRL_FREQ):
-        action, _states = model.predict(obs,
-                                        deterministic=True
-                                        )
-        obs, reward, terminated, truncated, info = env.step(action)
-        logger.log(drone=0,
-                   timestamp=i/env.CTRL_FREQ,
-                   state=np.hstack([obs[0:3], np.zeros(4), obs[3:15],  np.resize(action, (4))]),
-                   control=np.zeros(12)
-                   )
-        env.render()
-        print(terminated)
-        sync(i, start, env.CTRL_TIMESTEP)
-        if terminated:
-            obs = env.reset(seed=42, options={})
-    env.close()
+    # #### Show (and record a video of) the model's performance ##
+    # env = HoverAviary(gui=gui,
+    #                   record=record_video
+    #                  )
+    # logger = Logger(logging_freq_hz=int(env.CTRL_FREQ),
+    #                 num_drones=1,
+    #                 output_folder=output_folder,
+    #                 colab=colab
+    #                 )
+    # obs, info = env.reset(seed=42, options={})
+    # start = time.time()
+    # for i in range(3*env.CTRL_FREQ):
+    #     action, _states = model.predict(obs,
+    #                                     deterministic=True
+    #                                     )
+    #     obs, reward, terminated, truncated, info = env.step(action)
+    #     logger.log(drone=0,
+    #                timestamp=i/env.CTRL_FREQ,
+    #                state=np.hstack([obs[0:3], np.zeros(4), obs[3:15],  np.resize(action, (4))]),
+    #                control=np.zeros(12)
+    #                )
+    #     env.render()
+    #     print(terminated)
+    #     sync(i, start, env.CTRL_TIMESTEP)
+    #     if terminated:
+    #         obs = env.reset(seed=42, options={})
+    # env.close()
+    #
+    # if plot:
+    #     logger.plot()
 
-    if plot:
-        logger.plot()
+class TensorboardCallback(BaseCallback):
+    """
+    Custom callback for plotting additional values in tensorboard.
+    """
+
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+
+    def _on_step(self) -> bool:
+        # Log scalar value (here a random variable)
+        value = np.random.random()
+        self.logger.record("random_value", value)
+        return True
 
 if __name__ == "__main__":
     #### Define and parse (optional) arguments for the script ##

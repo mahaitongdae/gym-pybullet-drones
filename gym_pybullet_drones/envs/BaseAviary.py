@@ -340,6 +340,7 @@ class BaseAviary(gym.Env):
         else:
             self._saveLastAction(action)
             clipped_action = np.reshape(self._preprocessAction(action), (self.NUM_DRONES, 4))
+            ## Here is the RPM, number.
         #### Repeat for as many as the aggregate physics steps #####
         for _ in range(self.PYB_STEPS_PER_CTRL):
             #### Update and store the drones kinematic info for certain

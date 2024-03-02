@@ -64,7 +64,9 @@ class HoverAviary(BaseSingleAgentAviary):
             initial_xyzs = self.goal + initial_xyzs
             initial_xyzs = initial_xyzs[np.newaxis, :]
         if initial_rpys is None:
-            initial_rpys = np.random.normal(0., 5./180.*np.pi, [3])
+            initial_rp = np.random.normal(0., 5./180.*np.pi, [2,])
+            initial_y = np.random.normal(0., 60./180. *np.pi,)
+            initial_rpys = np.hstack([initial_rp, initial_y])
             initial_rpys = initial_rpys[np.newaxis, :]
 
         super().__init__(drone_model=drone_model,
@@ -115,15 +117,25 @@ class HoverAviary(BaseSingleAgentAviary):
         state = self._getDroneStateVector(0)
         # if self._computeTerminated():
         #     return -100.
-        if self.curriculum_stage == 1:
-            return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
-        elif self.curriculum_stage == 2:
-            return 2 + (- 2.5 * np.linalg.norm(self.goal-state[0:3]) # pos error
-                        - 2.5 * np.linalg.norm(state[7:10])          # rpy
-                        - 0.005 * np.linalg.norm(state[10:13])          # linear velocity
-                        - 0. * np.linalg.norm(state[13:16])           # angular velocity
-                        - 0.01 * np.linalg.norm(state[16:20] / self.MAX_RPM)
-                        )
+        # if self.curriculum_stage == 1:
+        #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
+        # elif self.curriculum_stage == 2:
+        rew_pos = - 2.5 * np.linalg.norm(self.goal-state[0:3])
+        rew_rpy = - 1.5 * np.linalg.norm(state[7:9])
+        rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
+        rew_ang_vel = - 0. * np.linalg.norm(state[13:16])
+        rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
+        self.rew_info = {'rew_pos': rew_pos,
+                         'rew_rpy': rew_rpy,
+                         'rew_lin_vel': rew_lin_vel,
+                         'rew_ang_vel': rew_ang_vel,
+                         'rew_action': rew_action}
+        return 2 + (rew_pos +
+                    rew_rpy +
+                    rew_lin_vel +
+                    rew_ang_vel +
+                    rew_action
+                    )
 
     ################################################################################
     
@@ -202,7 +214,7 @@ class HoverAviary(BaseSingleAgentAviary):
         MAX_PITCH_ROLL = np.pi # Full range
 
         clipped_pos_xy = np.clip(state[0:2], -MAX_XY, MAX_XY)
-        clipped_rel_pos_z = np.clip(state[2] - self.goal[2], 0, MAX_Z)
+        clipped_rel_pos_z = np.clip(state[2] - self.goal[2], -MAX_Z, MAX_Z)
         clipped_rp = np.clip(state[7:9], -MAX_PITCH_ROLL, MAX_PITCH_ROLL)
         clipped_vel_xy = np.clip(state[10:12], -MAX_LIN_VEL_XY, MAX_LIN_VEL_XY)
         clipped_vel_z = np.clip(state[12], -MAX_LIN_VEL_Z, MAX_LIN_VEL_Z)
@@ -287,7 +299,7 @@ class HoverAviary(BaseSingleAgentAviary):
 
         """
         if self.ACT_TYPE == ActionType.RPM:
-            return np.array(self.HOVER_RPM * (1+0.05*action))
+            return np.array(self.HOVER_RPM * (1+0.2*action))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
             m1 = t - r / 2 + p / 2 + y
@@ -295,7 +307,7 @@ class HoverAviary(BaseSingleAgentAviary):
             m3 = t + r / 2 - p / 2 + y
             m4 = t + r / 2 + p / 2 - y
             rpm_normalized =  np.array([m1, m2, m3, m4])
-            return np.array(self.HOVER_RPM * (1+0.05*rpm_normalized))
+            return np.array(self.HOVER_RPM * (1+0.2*rpm_normalized))
         elif self.ACT_TYPE == ActionType.PID:
             state = self._getDroneStateVector(0)
             next_pos = self._calculateNextStep(

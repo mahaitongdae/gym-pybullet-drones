@@ -6,6 +6,7 @@ from gym_pybullet_drones.envs.single_agent_rl.BaseSingleAgentAviary import Actio
 from gymnasium import spaces
 from gym_pybullet_drones.envs.single_agent_rl import HoverAviary
 from collections import deque
+import tensorboard
 
 MAX_LIN_VEL_XY = 3
 MAX_LIN_VEL_Z = 1
@@ -29,7 +30,7 @@ class HoverAviaryDelay(HoverAviary):
                  record=False,
                  obs: ObservationType=ObservationType.KIN,
                  act: ActionType=ActionType.TRPY,
-                 curriculum_stage = 2,
+                 add_ctrl_hist = True,
                  ):
         """Initialization of a single agent RL environment.
 
@@ -68,7 +69,7 @@ class HoverAviaryDelay(HoverAviary):
         if initial_rpys is None:
             initial_rpys = np.random.normal(0., 5./180.*np.pi, [3])
             initial_rpys = initial_rpys[np.newaxis, :]
-
+        self.add_ctrl_hist = add_ctrl_hist
         super().__init__(drone_model=drone_model,
                          initial_xyzs=initial_xyzs,
                          initial_rpys=initial_rpys,
@@ -81,25 +82,28 @@ class HoverAviaryDelay(HoverAviary):
                          act=act
                          )
 
-        self.curriculum_stage = curriculum_stage
+        # self.curriculum_stage = curriculum_stage
         self.EPISODE_LEN_SEC = 2
-        init_rpm_normalized = np.clip(np.random.normal(1., 0.3, size = [4,]), -1, 1)
         self.time_constant = 0.15 # RPM time const
-        self.rpm = self.HOVER_RPM * (1 + 0.05 * init_rpm_normalized)
+        self._reset_rpm()
         # self.control_history_steps_in_obs = 10
+
         self._reset_hist()
+        self.rew_info = {}
 
-        # self.rpy_error = deque(maxlen=int_error_horizon)
-        # self._error = deque(maxlen=int_error_horizon)
+    def _reset_rpm(self, seed=None):
+        if seed:
+            np.random.seed(seed)
+        init_rpm_normalized = np.clip(np.random.normal(0., 0.3, size=[1, 4]), -1, 1)
+        self.rpm = self.HOVER_RPM * (1 + 0.05 * init_rpm_normalized)
 
-
-    def _reset_hist(self, hist_horizon = 10):
+    def _reset_hist(self, hist_horizon = 36):
         self.pos_error = deque(maxlen=hist_horizon)
-        self.pos_error.append(np.zeros([3]))
-        self.pos_error.append(np.zeros([3]))
+        for _ in range(hist_horizon):
+            self.pos_error.append(np.zeros([3]))
         self.control_hist = deque(maxlen=hist_horizon)
-        self.control_hist.append(np.zeros([4]))
-        self.control_hist.append(np.zeros([4]))
+        for _ in range(hist_horizon):
+            self.control_hist.append(np.zeros([4]))
     ################################################################################
 
     def _computeObs(self):
@@ -110,16 +114,26 @@ class HoverAviaryDelay(HoverAviary):
         ############################################################
         #### OBS SPACE OF SIZE 16 xyz 3, quat 4, rpy, vel_xyz, angle_vel_xyz 3 each
         # ret = np.hstack([obs[0:10], obs[10:13], obs[13:16]]).reshape(12, )
-        ret = obs[:16]
-        return ret.astype('float32')
+        ret = obs
+        if self.add_ctrl_hist:
+            ctrl_hist = np.array(self.control_hist).flatten()
+            return np.hstack([ret, ctrl_hist]).astype('float32')
+        else:
+            return ret.astype('float32')
 
     def _observationSpace(self):
-        return spaces.Box(low=-1 * np.ones([16 + 4 * self.control_history_steps_in_obs]),
-                          high=np.ones([16 + 4 * self.control_history_steps_in_obs]),
-                          dtype=np.float32
-                          )
+        if self.add_ctrl_hist:
+            return spaces.Box(low=-1 * np.ones([16 + 4 + 4 * 36]),
+                              high=np.ones([16 + 4 + 4 * 36]),
+                              dtype=np.float32
+                              )
+        else:
+            return spaces.Box(low=-1 * np.ones([16 + 4]),
+                              high=np.ones([16 + 4]),
+                              dtype=np.float32
+                              )
     
-    def _computeReward(self):
+    def _computeReward(self, verbose=False):
         """Computes the current reward value.
 
         Returns
@@ -131,17 +145,49 @@ class HoverAviaryDelay(HoverAviary):
         state = self._getDroneStateVector(0)
         # if self._computeTerminated():
         #     return -100.
-        if self.curriculum_stage == 1:
-            return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
-        elif self.curriculum_stage == 2:
-            return 2 + (- 2.5 * np.linalg.norm(self.goal-state[0:3]) # pos error
-                        - 2.5 * np.linalg.norm(state[7:10])          # rpy
-                        - 0.005 * np.linalg.norm(state[10:13])          # linear velocity
-                        - 0. * np.linalg.norm(state[13:16])           # angular velocity
-                        - 0.01 * np.linalg.norm(state[16:20] / self.MAX_RPM)
-                        )
+        # if self.curriculum_stage == 1:
+        #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
+        # elif self.curriculum_stage == 2:
+        rew_pos = - 2.5 * np.linalg.norm(self.goal-state[0:3])
+        rew_rpy = - 1.5 * np.linalg.norm(state[7:10])
+        rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
+        rew_ang_vel = - 0. * np.linalg.norm(state[13:16])
+        rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
+        self.rew_info = {'rew_pos': rew_pos,
+                         'rew_rpy': rew_rpy,
+                         'rew_lin_vel': rew_lin_vel,
+                         'rew_ang_vel': rew_ang_vel,
+                         'rew_action': rew_action}
+        return 2 + (rew_pos +
+                    rew_rpy +
+                    rew_lin_vel +
+                    rew_ang_vel +
+                    rew_action
+                    )
 
     ################################################################################
+
+    def _getDroneStateVector(self,
+                             nth_drone
+                             ):
+        """Returns the state vector of the n-th drone.
+
+        Parameters
+        ----------
+        nth_drone : int
+            The ordinal number/position of the desired drone in list self.DRONE_IDS.
+
+        Returns
+        -------
+        ndarray
+            (20,)-shaped array of floats containing the state vector of the n-th drone.
+            Check the only line in this method and `_updateAndStoreKinematicInformation()`
+            to understand its format.
+
+        """
+        state = np.hstack([self.pos[nth_drone, :], self.quat[nth_drone, :], self.rpy[nth_drone, :],
+                           self.vel[nth_drone, :], self.ang_v[nth_drone, :], self.rpm[nth_drone, :]])
+        return state.reshape(20,)
     
     def _computeTerminated(self):
         """Computes the current done value.
@@ -218,7 +264,7 @@ class HoverAviaryDelay(HoverAviary):
         MAX_PITCH_ROLL = np.pi # Full range
 
         clipped_pos_xy = np.clip(state[0:2], -MAX_XY, MAX_XY)
-        clipped_rel_pos_z = np.clip(state[2] - self.goal[2], 0, MAX_Z)
+        clipped_rel_pos_z = np.clip(state[2] - self.goal[2], -MAX_Z, MAX_Z)
         clipped_rp = np.clip(state[7:9], -MAX_PITCH_ROLL, MAX_PITCH_ROLL)
         clipped_vel_xy = np.clip(state[10:12], -MAX_LIN_VEL_XY, MAX_LIN_VEL_XY)
         clipped_vel_z = np.clip(state[12], -MAX_LIN_VEL_Z, MAX_LIN_VEL_Z)
@@ -303,7 +349,7 @@ class HoverAviaryDelay(HoverAviary):
 
         """
         if self.ACT_TYPE == ActionType.RPM:
-            rpm_input =  np.array(self.HOVER_RPM * (1+0.05*action))
+            return np.array(self.HOVER_RPM * (1+0.5*action))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
             m1 = t - r / 2 + p / 2 + y
@@ -311,7 +357,7 @@ class HoverAviaryDelay(HoverAviary):
             m3 = t + r / 2 - p / 2 + y
             m4 = t + r / 2 + p / 2 - y
             rpm_normalized =  np.array([m1, m2, m3, m4])
-            rpm_input = np.array(self.HOVER_RPM * (1+0.05*rpm_normalized))
+            return np.array(self.HOVER_RPM * (1+0.5*rpm_normalized))
         elif self.ACT_TYPE == ActionType.PID:
             state = self._getDroneStateVector(0)
             next_pos = self._calculateNextStep(
@@ -330,8 +376,44 @@ class HoverAviaryDelay(HoverAviary):
         else:
             # print("[ERROR] in BaseSingleAgentAviary._preprocessAction()")
             raise NotImplementedError("[ERROR] in BaseSingleAgentAviary._preprocessAction()")
-        self.rpm = (1 / self.CTRL_FREQ / self.time_constant) * (rpm_input - self.rpm) + self.rpm
+        self.rpm = (1 / self.CTRL_FREQ / self.time_constant) * (rpm_input[np.newaxis, :] - self.rpm) + self.rpm
+        self.control_hist.append(rpm_input / self.MAX_RPM)
         return self.rpm
+
+    def _physics(self,
+                 rpm,
+                 nth_drone
+                 ):
+        """Base PyBullet physics implementation.
+
+        Parameters
+        ----------
+        rpm : ndarray
+            (4)-shaped array of ints containing the RPMs values of the 4 motors.
+        nth_drone : int
+            The ordinal number/position of the desired drone in list self.DRONE_IDS.
+
+        """
+        rpm = self.rpm[nth_drone, :] ## Use the dampled rpm
+        forces = np.array(rpm**2)*self.KF
+        torques = np.array(rpm**2)*self.KM
+        if self.DRONE_MODEL == DroneModel.RACE:
+            torques = -torques
+        z_torque = (-torques[0] + torques[1] - torques[2] + torques[3])
+        for i in range(4):
+            p.applyExternalForce(self.DRONE_IDS[nth_drone],
+                                 i,
+                                 forceObj=[0, 0, forces[i]],
+                                 posObj=[0, 0, 0],
+                                 flags=p.LINK_FRAME,
+                                 physicsClientId=self.CLIENT
+                                 )
+        p.applyExternalTorque(self.DRONE_IDS[nth_drone],
+                              4,
+                              torqueObj=[0, 0, z_torque],
+                              flags=p.LINK_FRAME,
+                              physicsClientId=self.CLIENT
+                              )
 
     def reset(self,
               seed : int = None,
@@ -369,8 +451,41 @@ class HoverAviaryDelay(HoverAviary):
         self._updateAndStoreKinematicInformation()
         #### Start video recording #################################
         self._startVideoRecording()
+        #### RESET THE RPM #########################################
+        self._reset_rpm(seed)
         #### Return the initial observation ########################
         initial_obs = self._computeObs()
         initial_info = self._computeInfo()
+
         return initial_obs, initial_info
+
+    def _computeInfo(self):
+
+        return self.rew_info
+
+
+
+def plot_step_input():
+    env = HoverAviaryDelay(gui=False,
+                           act=ActionType.RPM
+                           )
+    env.EPISODE_LEN_SEC = 3
+    rpm = []
+    for i in range(3 * env.CTRL_FREQ):
+        action = np.ones(env.action_space.shape)
+        obs, reward, terminated, truncated, info = env.step(action)
+        rpm.append(env.rpm)
+        # env.render()
+        # print(terminated)
+        if terminated:
+            obs, _ = env.reset(seed=42, options={})
+    env.close()
+
+    import matplotlib.pyplot as plt
+    plt.plot(np.arange(3 * env.CTRL_FREQ), np.concatenate(rpm))
+    plt.show()
+
+
+if __name__ == '__main__':
+    plot_step_input()
 
