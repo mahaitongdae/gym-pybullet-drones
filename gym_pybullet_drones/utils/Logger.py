@@ -382,6 +382,7 @@ class Logger(object):
 class LoggerV1(Logger):
     def __init__(self,
                  logging_freq_hz: int,
+                 env,
                  output_folder: str = "results",
                  num_drones: int = 1,
                  duration_sec: int = 0,
@@ -392,7 +393,10 @@ class LoggerV1(Logger):
                  num_drones = num_drones,
                  duration_sec = duration_sec,
                  colab = colab)
-        self.states = np.zeros((num_drones, 20, duration_sec * self.LOGGING_FREQ_HZ))  #### 16 states: pos_x,
+
+        self.obs_space = env.observation_space.shape[0]
+
+        self.states = np.zeros((num_drones, env.observation_space.shape[0], duration_sec * self.LOGGING_FREQ_HZ))  #### 16 states: pos_x,
         # pos_y,
         # pos_z,
         # vel_x,
@@ -440,7 +444,7 @@ class LoggerV1(Logger):
         #### Add rows to the matrices if a counter exceeds their size
         if current_counter >= self.timestamps.shape[1]:
             self.timestamps = np.concatenate((self.timestamps, np.zeros((self.NUM_DRONES, 1))), axis=1)
-            self.states = np.concatenate((self.states, np.zeros((self.NUM_DRONES, 20, 1))), axis=2)
+            self.states = np.concatenate((self.states, np.zeros((self.NUM_DRONES, self.obs_space, 1))), axis=2)
             self.controls = np.concatenate((self.controls, np.zeros((self.NUM_DRONES, 4, 1))), axis=2)
         #### Advance a counter is the matrices have overgrown it ###
         elif not self.PREALLOCATED_ARRAYS and self.timestamps.shape[1] > current_counter:
@@ -525,7 +529,7 @@ class LoggerV1(Logger):
 
         #### Time ##################################################
         row = 9
-        axs[row, col].plot(t, t, label="time")
+        axs[row, col].plot(t, np.linalg.norm(self.states[j, 13: 16, :], axis=0), label="omega norm")
         axs[row, col].set_xlabel('time')
         axs[row, col].set_ylabel('time')
 
@@ -579,7 +583,7 @@ class LoggerV1(Logger):
         #### RPMs ##################################################
         row = 6
         for j in range(self.NUM_DRONES):
-            axs[row, col].plot(t, self.states[j, 12, :], label="drone_"+str(j))
+            axs[row, col].plot(t, self.controls[j, 0, :], label="drone_"+str(j))
         axs[row, col].set_xlabel('time')
         if pwm:
             axs[row, col].set_ylabel('PWM0')
@@ -587,7 +591,7 @@ class LoggerV1(Logger):
             axs[row, col].set_ylabel('RPM0')
         row = 7
         for j in range(self.NUM_DRONES):
-            axs[row, col].plot(t, self.states[j, 13, :], label="drone_"+str(j))
+            axs[row, col].plot(t, self.controls[j, 1, :], label="drone_"+str(j))
         axs[row, col].set_xlabel('time')
         if pwm:
             axs[row, col].set_ylabel('PWM1')
@@ -595,7 +599,7 @@ class LoggerV1(Logger):
             axs[row, col].set_ylabel('RPM1')
         row = 8
         for j in range(self.NUM_DRONES):
-            axs[row, col].plot(t, self.states[j, 14, :], label="drone_"+str(j))
+            axs[row, col].plot(t, self.controls[j, 2, :], label="drone_"+str(j))
         axs[row, col].set_xlabel('time')
         if pwm:
             axs[row, col].set_ylabel('PWM2')
@@ -603,7 +607,7 @@ class LoggerV1(Logger):
             axs[row, col].set_ylabel('RPM2')
         row = 9
         for j in range(self.NUM_DRONES):
-            axs[row, col].plot(t, self.states[j, 15, :], label="drone_"+str(j))
+            axs[row, col].plot(t, self.controls[j, 3, :], label="drone_"+str(j))
         axs[row, col].set_xlabel('time')
         if pwm:
             axs[row, col].set_ylabel('PWM3')

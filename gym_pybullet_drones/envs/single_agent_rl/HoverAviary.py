@@ -11,6 +11,8 @@ MAX_LIN_VEL_Z = 1
 MAX_XY = 1.
 MAX_Z = 1.
 
+RPM_FACTOR = 0.2
+
 class HoverAviary(BaseSingleAgentAviary):
     """Single agent RL problem: hover at position."""
 
@@ -27,7 +29,7 @@ class HoverAviary(BaseSingleAgentAviary):
                  record=False,
                  obs: ObservationType=ObservationType.KIN,
                  act: ActionType=ActionType.TRPY,
-                 curriculum_stage = 2,
+                 add_action_obs = True,
                  ):
         """Initialization of a single agent RL environment.
 
@@ -68,7 +70,7 @@ class HoverAviary(BaseSingleAgentAviary):
             initial_y = np.random.normal(0., 60./180. *np.pi,)
             initial_rpys = np.hstack([initial_rp, initial_y])
             initial_rpys = initial_rpys[np.newaxis, :]
-
+        self.add_action_obs = add_action_obs
         super().__init__(drone_model=drone_model,
                          initial_xyzs=initial_xyzs,
                          initial_rpys=initial_rpys,
@@ -81,8 +83,12 @@ class HoverAviary(BaseSingleAgentAviary):
                          act=act
                          )
 
-        self.curriculum_stage = curriculum_stage
+        # self.curriculum_stage = curriculum_stage
+
         self.EPISODE_LEN_SEC = 2
+        self.rew_info = {}
+        self.done_info = {}
+        self.last_step_action = np.zeros([4,])
 
 
 
@@ -96,12 +102,12 @@ class HoverAviary(BaseSingleAgentAviary):
         ############################################################
         #### OBS SPACE OF SIZE 16 xyz 3, quat 4, rpy, vel_xyz, angle_vel_xyz 3 each
         # ret = np.hstack([obs[0:10], obs[10:13], obs[13:16]]).reshape(12, )
-        ret = obs[:16]
+        ret = obs if self.add_action_obs else obs[:16]
         return ret.astype('float32')
 
     def _observationSpace(self):
-        return spaces.Box(low=-1 * np.ones([16]),
-                          high=np.ones([16]),
+        return spaces.Box(low=-1 * np.ones([20 if self.add_action_obs else 16]),
+                          high=np.ones([20 if self.add_action_obs else 16]),
                           dtype=np.float32
                           )
     
@@ -125,16 +131,19 @@ class HoverAviary(BaseSingleAgentAviary):
         rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
         rew_ang_vel = - 0. * np.linalg.norm(state[13:16])
         rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
+        rew_action_diff = -1. * np.linalg.norm((self.last_clipped_action[0] - self.last_step_action) / (2 * RPM_FACTOR * self.HOVER_RPM))
         self.rew_info = {'rew_pos': rew_pos,
                          'rew_rpy': rew_rpy,
                          'rew_lin_vel': rew_lin_vel,
                          'rew_ang_vel': rew_ang_vel,
-                         'rew_action': rew_action}
+                         'rew_action': rew_action,
+                         'rew_action_diff': rew_action_diff}
         return 2 + (rew_pos +
                     rew_rpy +
                     rew_lin_vel +
                     rew_ang_vel +
-                    rew_action
+                    rew_action +
+                    rew_action_diff
                     )
 
     ################################################################################
@@ -149,15 +158,18 @@ class HoverAviary(BaseSingleAgentAviary):
 
         """
         state = self._getDroneStateVector(0)
-        if self.step_counter/self.PYB_FREQ > self.EPISODE_LEN_SEC:
-            return True
-        elif np.abs(self.goal - state[0:3]).max() > MAX_Z:
+
+        if np.abs(self.goal - state[0:3]).max() > MAX_Z:
+            self.done_info = {'done': 'pos'}
             return True
         elif np.abs(state[7:9]).max() > np.pi / 2:
+            self.done_info = {'done': 'roll_pitch'}
             return True
         elif np.linalg.norm(state[10:13]) > 10:
+            self.done_info = {'done': 'lin_vel'}
             return True
         elif np.linalg.norm(state[13:16]) > np.pi:
+            self.done_info = {'done': 'ang_vel'}
             return True
         else:
             return False
@@ -175,7 +187,11 @@ class HoverAviary(BaseSingleAgentAviary):
             Always false.
 
         """
-        return False
+        if self.step_counter/self.PYB_FREQ > self.EPISODE_LEN_SEC:
+            self.done_info = {'done': 'truncated'}
+            return True
+        else:
+            return False
 
     ################################################################################
     
@@ -190,7 +206,12 @@ class HoverAviary(BaseSingleAgentAviary):
             Dummy value.
 
         """
-        return {"answer": 42} #### Calculated by the Deep Thought supercomputer in 7.5M years
+        ## RECORD LAST STEP ACTION HERE SINCE THIS IS THE LAST LINE IN SELF.STEP
+        info = {}
+        info.update(self.rew_info)
+        info.update(self.done_info)
+        self.last_step_action = self.last_clipped_action[0]
+        return info #### Calculated by the Deep Thought supercomputer in 7.5M years
 
     ################################################################################
     
@@ -234,7 +255,7 @@ class HoverAviary(BaseSingleAgentAviary):
         normalized_y = state[9] / np.pi # No reason to clip
         normalized_vel_xy = clipped_vel_xy / MAX_LIN_VEL_XY
         normalized_vel_z = clipped_vel_z / MAX_LIN_VEL_XY
-        normalized_ang_vel = state[13:16]/np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
+        normalized_ang_vel = state[13:16] # /np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
         normalized_rpm = state[16:20] / self.MAX_RPM
 
         norm_and_clipped = np.hstack([normalized_pos_xy,
@@ -299,7 +320,7 @@ class HoverAviary(BaseSingleAgentAviary):
 
         """
         if self.ACT_TYPE == ActionType.RPM:
-            return np.array(self.HOVER_RPM * (1+0.2*action))
+            return np.array(self.HOVER_RPM * (1+RPM_FACTOR*action))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
             m1 = t - r / 2 + p / 2 + y
@@ -307,7 +328,7 @@ class HoverAviary(BaseSingleAgentAviary):
             m3 = t + r / 2 - p / 2 + y
             m4 = t + r / 2 + p / 2 - y
             rpm_normalized =  np.array([m1, m2, m3, m4])
-            return np.array(self.HOVER_RPM * (1+0.2*rpm_normalized))
+            return np.array(self.HOVER_RPM * (1+RPM_FACTOR*rpm_normalized))
         elif self.ACT_TYPE == ActionType.PID:
             state = self._getDroneStateVector(0)
             next_pos = self._calculateNextStep(

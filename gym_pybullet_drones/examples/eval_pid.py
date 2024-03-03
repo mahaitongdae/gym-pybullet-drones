@@ -20,7 +20,7 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO, SAC, TD3, A2C
 
-from gym_pybullet_drones.utils.Logger import Logger
+from gym_pybullet_drones.utils.Logger import Logger, LoggerV1
 from gym_pybullet_drones.envs.single_agent_rl.HoverAviary import HoverAviary
 from gym_pybullet_drones.envs.single_agent_rl.BaseSingleAgentAviary import ActionType
 from gym_pybullet_drones.utils.utils import sync, str2bool
@@ -34,14 +34,15 @@ DEFAULT_COLAB = False
 
 def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=DEFAULT_COLAB, record_video=DEFAULT_RECORD_VIDEO):
 
-    model = A2C.load('a2c')
+    # model = A2C.load('a2c')
 
     #### Show (and record a video of) the model's performance ##
     env = HoverAviary(gui=gui,
                       record=record_video,
                       act= ActionType.PID
                      )
-    logger = Logger(logging_freq_hz=int(env.CTRL_FREQ),
+    logger = LoggerV1(logging_freq_hz=int(env.CTRL_FREQ),
+                      env=env,
                     num_drones=1,
                     output_folder=output_folder,
                     colab=colab
@@ -49,18 +50,19 @@ def run(output_folder=DEFAULT_OUTPUT_FOLDER, gui=DEFAULT_GUI, plot=True, colab=D
     obs, info = env.reset(seed=42, options={})
     start = time.time()
     for i in range(3*env.CTRL_FREQ):
-        action, _states = model.predict(obs,
-                                        deterministic=True
-                                        )
+        # action, _states = model.predict(obs,
+        #                                 deterministic=True
+        #                                 )
         # action = env.goal
+        action = np.zeros([4,])
         obs, reward, terminated, truncated, info = env.step(action)
         logger.log(drone=0,
                    timestamp=i/env.CTRL_FREQ,
-                   state=np.hstack([obs[0:3], np.zeros(4), obs[3:15],  np.resize(action, (4))]),
-                   control=np.zeros(12)
+                   state=obs,
+                   control=action
                    )
         env.render()
-        time.sleep(0.1)
+        # time.sleep(0.1)
         print(terminated)
         sync(i, start, env.CTRL_TIMESTEP)
         if terminated:
