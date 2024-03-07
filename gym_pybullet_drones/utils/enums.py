@@ -35,6 +35,7 @@ class ImageType(Enum):
 class ActionType(Enum):
     """Action type enumeration class."""
     RPM = "rpm"                 # RPMS
+    RAW = 'raw'
     PID = "pid"                 # PID control
     VEL = "vel"                 # Velocity input (using PID control)
     TRPY = "trpy"               # Velocity input (using PID control)

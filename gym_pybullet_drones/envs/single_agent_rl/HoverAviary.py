@@ -28,7 +28,7 @@ class HoverAviary(BaseSingleAgentAviary):
                  gui=False,
                  record=False,
                  obs: ObservationType=ObservationType.KIN,
-                 act: ActionType=ActionType.TRPY,
+                 act: ActionType=ActionType.RAW,
                  add_action_obs = True,
                  ):
         """Initialization of a single agent RL environment.
@@ -257,6 +257,7 @@ class HoverAviary(BaseSingleAgentAviary):
         normalized_vel_z = clipped_vel_z / MAX_LIN_VEL_XY
         normalized_ang_vel = state[13:16] # /np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
         normalized_rpm = state[16:20] / self.MAX_RPM
+        last_action = self.last_step_action
 
         norm_and_clipped = np.hstack([normalized_pos_xy,
                                       normalized_pos_z,
@@ -266,7 +267,7 @@ class HoverAviary(BaseSingleAgentAviary):
                                       normalized_vel_xy,
                                       normalized_vel_z,
                                       normalized_ang_vel,
-                                      normalized_rpm
+                                      last_action
                                       ]).reshape(20,)
 
         return norm_and_clipped
@@ -321,6 +322,9 @@ class HoverAviary(BaseSingleAgentAviary):
         """
         if self.ACT_TYPE == ActionType.RPM:
             return np.array(self.HOVER_RPM * (1+RPM_FACTOR*action))
+        elif self.ACT_TYPE == ActionType.RAW:
+            # RAW for force input
+            return np.array(np.sqrt(self.MAX_THRUST / 4 * (0.5 * (1+action)) ))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
             m1 = t - r / 2 + p / 2 + y
