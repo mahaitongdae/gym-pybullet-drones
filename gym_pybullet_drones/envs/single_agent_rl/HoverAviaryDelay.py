@@ -13,6 +13,7 @@ MAX_LIN_VEL_Z = 1
 
 MAX_XY = 1.
 MAX_Z = 1.
+RPM_FACTOR = 0.2
 
 class HoverAviaryDelay(HoverAviary):
     """Single agent RL problem: hover at position."""
@@ -30,7 +31,8 @@ class HoverAviaryDelay(HoverAviary):
                  record=False,
                  obs: ObservationType=ObservationType.KIN,
                  act: ActionType=ActionType.TRPY,
-                 add_ctrl_hist = True,
+                 add_action_obs = True,
+                 add_pd = True
                  ):
         """Initialization of a single agent RL environment.
 
@@ -67,9 +69,12 @@ class HoverAviaryDelay(HoverAviary):
             initial_xyzs = self.goal + initial_xyzs
             initial_xyzs = initial_xyzs[np.newaxis, :]
         if initial_rpys is None:
-            initial_rpys = np.random.normal(0., 5./180.*np.pi, [3])
+            initial_rp = np.random.normal(0., 5./180.*np.pi, [2,])
+            initial_y = np.random.normal(0., 60./180. *np.pi,)
+            initial_rpys = np.hstack([initial_rp, initial_y])
             initial_rpys = initial_rpys[np.newaxis, :]
-        self.add_ctrl_hist = add_ctrl_hist
+        self.add_action_obs = add_action_obs
+        self.add_pd = add_pd
         super().__init__(drone_model=drone_model,
                          initial_xyzs=initial_xyzs,
                          initial_rpys=initial_rpys,
@@ -84,7 +89,7 @@ class HoverAviaryDelay(HoverAviary):
 
         # self.curriculum_stage = curriculum_stage
         self.EPISODE_LEN_SEC = 2
-        self.time_constant = 0.15 # RPM time const
+        self.time_constant = 0.05 # RPM time const
         self._reset_rpm()
         # self.control_history_steps_in_obs = 10
 
@@ -101,13 +106,14 @@ class HoverAviaryDelay(HoverAviary):
         self.pos_error = deque(maxlen=hist_horizon)
         for _ in range(hist_horizon):
             self.pos_error.append(np.zeros([3]))
-        self.control_hist = deque(maxlen=hist_horizon)
+        self.ang_error = deque(maxlen=hist_horizon)
         for _ in range(hist_horizon):
-            self.control_hist.append(np.zeros([4]))
+            self.ang_error.append(np.zeros([3]))
     ################################################################################
 
     def _computeObs(self):
-        obs = self._clipAndNormalizeState(self._getDroneStateVector(0))
+        state = self._getDroneStateVector(0)
+        obs = self._clipAndNormalizeState(state)
         ############################################################
         #### OBS OF SIZE 20 (WITH QUATERNION AND RPMS)
         # return obs
@@ -115,23 +121,23 @@ class HoverAviaryDelay(HoverAviary):
         #### OBS SPACE OF SIZE 16 xyz 3, quat 4, rpy, vel_xyz, angle_vel_xyz 3 each
         # ret = np.hstack([obs[0:10], obs[10:13], obs[13:16]]).reshape(12, )
         ret = obs
-        if self.add_ctrl_hist:
-            ctrl_hist = np.array(self.control_hist).flatten()
-            return np.hstack([ret, ctrl_hist]).astype('float32')
+        if self.add_pd:
+            self.pos_error.append(state[0:3] - self.goal)
+            self.ang_error.append(state[7:10])
+            pos_error_i = np.array(self.pos_error).sum(axis=0) / (MAX_XY * len(self.pos_error))
+            pos_error_d = self.pos_error[-1] - self.pos_error[-2] / (MAX_XY * 2)
+            ang_error_i = np.array(self.ang_error).sum(axis=0) / (np.pi * len(self.ang_error))
+            ang_error_d = self.ang_error[-1] - self.ang_error[-2] / (np.pi * 2)
+            return np.hstack([ret, pos_error_i, pos_error_d, ang_error_i, ang_error_d]).astype('float32')
         else:
             return ret.astype('float32')
 
     def _observationSpace(self):
-        if self.add_ctrl_hist:
-            return spaces.Box(low=-1 * np.ones([16 + 4 + 4 * 36]),
-                              high=np.ones([16 + 4 + 4 * 36]),
-                              dtype=np.float32
-                              )
-        else:
-            return spaces.Box(low=-1 * np.ones([16 + 4]),
-                              high=np.ones([16 + 4]),
-                              dtype=np.float32
-                              )
+        return spaces.Box(low=-1 * np.ones([16 + 4 + 12 if self.add_pd else 16 + 4]),
+                          high=np.ones([16 + 4 + 12 if self.add_pd else 16 + 4]),
+                          dtype=np.float32
+                          )
+
     
     def _computeReward(self, verbose=False):
         """Computes the current reward value.
@@ -149,20 +155,23 @@ class HoverAviaryDelay(HoverAviary):
         #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
         # elif self.curriculum_stage == 2:
         rew_pos = - 2.5 * np.linalg.norm(self.goal-state[0:3])
-        rew_rpy = - 1.5 * np.linalg.norm(state[7:10])
+        rew_rpy = - 1.5 * np.linalg.norm(state[7:9])
         rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
-        rew_ang_vel = - 0. * np.linalg.norm(state[13:16])
+        rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
         rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
+        rew_action_diff = -1. * np.linalg.norm((self.last_clipped_action[0] - self.last_step_action) / (2 * RPM_FACTOR * self.HOVER_RPM))
         self.rew_info = {'rew_pos': rew_pos,
                          'rew_rpy': rew_rpy,
                          'rew_lin_vel': rew_lin_vel,
                          'rew_ang_vel': rew_ang_vel,
-                         'rew_action': rew_action}
+                         'rew_action': rew_action,
+                         'rew_action_diff': rew_action_diff}
         return 2 + (rew_pos +
                     rew_rpy +
                     rew_lin_vel +
                     rew_ang_vel +
-                    rew_action
+                    rew_action +
+                    rew_action_diff
                     )
 
     ################################################################################
@@ -199,15 +208,18 @@ class HoverAviaryDelay(HoverAviary):
 
         """
         state = self._getDroneStateVector(0)
-        if self.step_counter/self.PYB_FREQ > self.EPISODE_LEN_SEC:
-            return True
-        elif np.abs(self.goal - state[0:3]).max() > MAX_Z:
+
+        if np.abs(self.goal - state[0:3]).max() > MAX_Z:
+            self.done_info = {'done': 'pos'}
             return True
         elif np.abs(state[7:9]).max() > np.pi / 2:
+            self.done_info = {'done': 'roll_pitch'}
             return True
         elif np.linalg.norm(state[10:13]) > 10:
+            self.done_info = {'done': 'lin_vel'}
             return True
         elif np.linalg.norm(state[13:16]) > np.pi:
+            self.done_info = {'done': 'ang_vel'}
             return True
         else:
             return False
@@ -225,7 +237,11 @@ class HoverAviaryDelay(HoverAviary):
             Always false.
 
         """
-        return False
+        if self.step_counter/self.PYB_FREQ > self.EPISODE_LEN_SEC:
+            self.done_info = {'done': 'truncated'}
+            return True
+        else:
+            return False
 
     ################################################################################
     
@@ -240,7 +256,12 @@ class HoverAviaryDelay(HoverAviary):
             Dummy value.
 
         """
-        return {"answer": 42} #### Calculated by the Deep Thought supercomputer in 7.5M years
+        ## RECORD LAST STEP ACTION HERE SINCE THIS IS THE LAST LINE IN SELF.STEP
+        info = {}
+        info.update(self.rew_info)
+        info.update(self.done_info)
+        self.last_step_action = self.last_clipped_action[0]
+        return info #### Calculated by the Deep Thought supercomputer in 7.5M years
 
     ################################################################################
     
@@ -284,8 +305,9 @@ class HoverAviaryDelay(HoverAviary):
         normalized_y = state[9] / np.pi # No reason to clip
         normalized_vel_xy = clipped_vel_xy / MAX_LIN_VEL_XY
         normalized_vel_z = clipped_vel_z / MAX_LIN_VEL_XY
-        normalized_ang_vel = state[13:16]/np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
+        normalized_ang_vel = state[13:16] # /np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
         normalized_rpm = state[16:20] / self.MAX_RPM
+        last_action = self.last_step_action
 
         norm_and_clipped = np.hstack([normalized_pos_xy,
                                       normalized_pos_z,
@@ -295,7 +317,7 @@ class HoverAviaryDelay(HoverAviary):
                                       normalized_vel_xy,
                                       normalized_vel_z,
                                       normalized_ang_vel,
-                                      normalized_rpm
+                                      last_action
                                       ]).reshape(20,)
 
         return norm_and_clipped
@@ -349,7 +371,7 @@ class HoverAviaryDelay(HoverAviary):
 
         """
         if self.ACT_TYPE == ActionType.RPM:
-            return np.array(self.HOVER_RPM * (1+0.5*action))
+            return np.array(self.HOVER_RPM * (1+RPM_FACTOR * action))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
             m1 = t - r / 2 + p / 2 + y
@@ -453,15 +475,12 @@ class HoverAviaryDelay(HoverAviary):
         self._startVideoRecording()
         #### RESET THE RPM #########################################
         self._reset_rpm(seed)
+        self._reset_hist()
         #### Return the initial observation ########################
         initial_obs = self._computeObs()
         initial_info = self._computeInfo()
 
         return initial_obs, initial_info
-
-    def _computeInfo(self):
-
-        return self.rew_info
 
 
 
@@ -469,6 +488,7 @@ def plot_step_input():
     env = HoverAviaryDelay(gui=False,
                            act=ActionType.RPM
                            )
+    env.reset()
     env.EPISODE_LEN_SEC = 3
     rpm = []
     for i in range(3 * env.CTRL_FREQ):
