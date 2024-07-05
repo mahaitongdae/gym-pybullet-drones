@@ -5,15 +5,10 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics
 from gym_pybullet_drones.envs.single_agent_rl.BaseSingleAgentAviary import ActionType, ObservationType, BaseSingleAgentAviary
 from gymnasium import spaces
 from gym_pybullet_drones.envs.single_agent_rl import HoverAviary
+from gym_pybullet_drones.envs.single_agent_rl.HoverAviary import MAX_XY, MAX_Z, MAX_LIN_VEL_Z, MAX_LIN_VEL_XY, RPM_FACTOR
 from collections import deque
+
 import tensorboard
-
-MAX_LIN_VEL_XY = 3
-MAX_LIN_VEL_Z = 1
-
-MAX_XY = 1.
-MAX_Z = 1.
-RPM_FACTOR = 0.2
 
 class HoverAviaryDelay(HoverAviary):
     """Single agent RL problem: hover at position."""
@@ -93,7 +88,7 @@ class HoverAviaryDelay(HoverAviary):
         self._reset_rpm()
         # self.control_history_steps_in_obs = 10
 
-        self._reset_hist()
+        self.reset_errors()
         self.rew_info = {}
 
     def _reset_rpm(self, seed=None):
@@ -102,77 +97,76 @@ class HoverAviaryDelay(HoverAviary):
         init_rpm_normalized = np.clip(np.random.normal(0., 0.3, size=[1, 4]), -1, 1)
         self.rpm = self.HOVER_RPM * (1 + 0.05 * init_rpm_normalized)
 
-    def _reset_hist(self, hist_horizon = 36):
-        self.pos_error = deque(maxlen=hist_horizon)
-        for _ in range(hist_horizon):
-            self.pos_error.append(np.zeros([3]))
-        self.ang_error = deque(maxlen=hist_horizon)
-        for _ in range(hist_horizon):
-            self.ang_error.append(np.zeros([3]))
-    ################################################################################
+    # def _reset_hist(self, hist_horizon = 36):
+    #     self.pos_error = deque(maxlen=hist_horizon)
+    #     for _ in range(hist_horizon):
+    #         self.pos_error.append(np.zeros([3]))
+    #     self.ang_error = deque(maxlen=hist_horizon)
+    #     for _ in range(hist_horizon):
+    #         self.ang_error.append(np.zeros([3]))
+    # ################################################################################
 
-    def _computeObs(self):
-        state = self._getDroneStateVector(0)
-        obs = self._clipAndNormalizeState(state)
-        ############################################################
-        #### OBS OF SIZE 20 (WITH QUATERNION AND RPMS)
-        # return obs
-        ############################################################
-        #### OBS SPACE OF SIZE 16 xyz 3, quat 4, rpy, vel_xyz, angle_vel_xyz 3 each
-        # ret = np.hstack([obs[0:10], obs[10:13], obs[13:16]]).reshape(12, )
-        ret = obs
-        if self.add_pd:
-            self.pos_error.append(state[0:3] - self.goal)
-            self.ang_error.append(state[7:10])
-            pos_error_i = np.array(self.pos_error).sum(axis=0) / (MAX_XY * len(self.pos_error))
-            pos_error_d = self.pos_error[-1] - self.pos_error[-2] / (MAX_XY * 2)
-            ang_error_i = np.array(self.ang_error).sum(axis=0) / (np.pi * len(self.ang_error))
-            ang_error_d = self.ang_error[-1] - self.ang_error[-2] / (np.pi * 2)
-            return np.hstack([ret, pos_error_i, pos_error_d, ang_error_i, ang_error_d]).astype('float32')
-        else:
-            return ret.astype('float32')
+    # def _computeObs(self):
+    #     state = self._getDroneStateVector(0)
+    #     obs = self._clipAndNormalizeState(state)
+    #     ############################################################
+    #     #### OBS OF SIZE 20 (WITH QUATERNION AND RPMS)
+    #     # return obs
+    #     ############################################################
+    #     #### OBS SPACE OF SIZE 16 xyz 3, quat 4, rpy, vel_xyz, angle_vel_xyz 3 each
+    #     # ret = np.hstack([obs[0:10], obs[10:13], obs[13:16]]).reshape(12, )
+    #     ret = obs
+    #     if self.add_pd:
+    #         self.pos_error.append(state[0:3] - self.goal)
+    #         self.ang_error.append(state[7:10])
+    #         pos_error_i = np.array(self.pos_error).sum(axis=0) / (MAX_XY * len(self.pos_error))
+    #         pos_error_d = self.pos_error[-1] - self.pos_error[-2] / (MAX_XY * 2)
+    #         ang_error_i = np.array(self.ang_error).sum(axis=0) / (np.pi * len(self.ang_error))
+    #         ang_error_d = self.ang_error[-1] - self.ang_error[-2] / (np.pi * 2)
+    #         return np.hstack([ret, pos_error_i, pos_error_d, ang_error_i, ang_error_d]).astype('float32')
+    #     else:
+    #         return ret.astype('float32')
 
     def _observationSpace(self):
         return spaces.Box(low=-1 * np.ones([16 + 4 + 12 if self.add_pd else 16 + 4]),
                           high=np.ones([16 + 4 + 12 if self.add_pd else 16 + 4]),
                           dtype=np.float32
                           )
-
     
-    def _computeReward(self, verbose=False):
-        """Computes the current reward value.
-
-        Returns
-        -------
-        float
-            The reward.
-
-        """
-        state = self._getDroneStateVector(0)
-        # if self._computeTerminated():
-        #     return -100.
-        # if self.curriculum_stage == 1:
-        #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
-        # elif self.curriculum_stage == 2:
-        rew_pos = - 2.5 * np.linalg.norm(self.goal-state[0:3])
-        rew_rpy = - 1.5 * np.linalg.norm(state[7:9])
-        rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
-        rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
-        rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
-        rew_action_diff = -1. * np.linalg.norm((self.last_clipped_action[0] - self.last_step_action) / (2 * RPM_FACTOR * self.HOVER_RPM))
-        self.rew_info = {'rew_pos': rew_pos,
-                         'rew_rpy': rew_rpy,
-                         'rew_lin_vel': rew_lin_vel,
-                         'rew_ang_vel': rew_ang_vel,
-                         'rew_action': rew_action,
-                         'rew_action_diff': rew_action_diff}
-        return 2 + (rew_pos +
-                    rew_rpy +
-                    rew_lin_vel +
-                    rew_ang_vel +
-                    rew_action +
-                    rew_action_diff
-                    )
+    # def _computeReward(self, verbose=False):
+    #     """Computes the current reward value.
+    #
+    #     Returns
+    #     -------
+    #     float
+    #         The reward.
+    #
+    #     """
+    #     state = self._getDroneStateVector(0)
+    #     # if self._computeTerminated():
+    #     #     return -100.
+    #     # if self.curriculum_stage == 1:
+    #     #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
+    #     # elif self.curriculum_stage == 2:
+    #     rew_pos = - 2.5 * np.linalg.norm(self.goal-state[0:3])
+    #     rew_rpy = - 1.5 * np.linalg.norm(state[7:9])
+    #     rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
+    #     rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
+    #     rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
+    #     rew_action_diff = -1. * np.linalg.norm((self.last_clipped_action[0] - self.last_step_action) / (2 * RPM_FACTOR * self.HOVER_RPM))
+    #     self.rew_info = {'rew_pos': rew_pos,
+    #                      'rew_rpy': rew_rpy,
+    #                      'rew_lin_vel': rew_lin_vel,
+    #                      'rew_ang_vel': rew_ang_vel,
+    #                      'rew_action': rew_action,
+    #                      'rew_action_diff': rew_action_diff}
+    #     return 2 + (rew_pos +
+    #                 rew_rpy +
+    #                 rew_lin_vel +
+    #                 rew_ang_vel +
+    #                 rew_action +
+    #                 rew_action_diff
+    #                 )
 
     ################################################################################
 
@@ -198,31 +192,31 @@ class HoverAviaryDelay(HoverAviary):
                            self.vel[nth_drone, :], self.ang_v[nth_drone, :], self.rpm[nth_drone, :]])
         return state.reshape(20,)
     
-    def _computeTerminated(self):
-        """Computes the current done value.
-
-        Returns
-        -------
-        bool
-            Whether the current episode is done.
-
-        """
-        state = self._getDroneStateVector(0)
-
-        if np.abs(self.goal - state[0:3]).max() > MAX_Z:
-            self.done_info = {'done': 'pos'}
-            return True
-        elif np.abs(state[7:9]).max() > np.pi / 2:
-            self.done_info = {'done': 'roll_pitch'}
-            return True
-        elif np.linalg.norm(state[10:13]) > 10:
-            self.done_info = {'done': 'lin_vel'}
-            return True
-        elif np.linalg.norm(state[13:16]) > np.pi:
-            self.done_info = {'done': 'ang_vel'}
-            return True
-        else:
-            return False
+    # def _computeTerminated(self):
+    #     """Computes the current done value.
+    #
+    #     Returns
+    #     -------
+    #     bool
+    #         Whether the current episode is done.
+    #
+    #     """
+    #     state = self._getDroneStateVector(0)
+    #
+    #     if np.abs(self.goal - state[0:3]).max() > MAX_Z:
+    #         self.done_info = {'done': 'pos'}
+    #         return True
+    #     elif np.abs(state[7:9]).max() > np.pi / 2:
+    #         self.done_info = {'done': 'roll_pitch'}
+    #         return True
+    #     elif np.linalg.norm(state[10:13]) > 10:
+    #         self.done_info = {'done': 'lin_vel'}
+    #         return True
+    #     elif np.linalg.norm(state[13:16]) > np.pi:
+    #         self.done_info = {'done': 'ang_vel'}
+    #         return True
+    #     else:
+    #         return False
         
     ################################################################################
     
@@ -265,62 +259,62 @@ class HoverAviaryDelay(HoverAviary):
 
     ################################################################################
     
-    def _clipAndNormalizeState(self,
-                               state
-                               ):
-        """Normalizes a drone's state to the [-1,1] range.
-
-        Parameters
-        ----------
-        state : ndarray
-            (20,)-shaped array of floats containing the non-normalized state of a single drone.
-
-        Returns
-        -------
-        ndarray
-            (20,)-shaped array of floats containing the normalized state of a single drone.
-
-        """
-
-        MAX_PITCH_ROLL = np.pi # Full range
-
-        clipped_pos_xy = np.clip(state[0:2], -MAX_XY, MAX_XY)
-        clipped_rel_pos_z = np.clip(state[2] - self.goal[2], -MAX_Z, MAX_Z)
-        clipped_rp = np.clip(state[7:9], -MAX_PITCH_ROLL, MAX_PITCH_ROLL)
-        clipped_vel_xy = np.clip(state[10:12], -MAX_LIN_VEL_XY, MAX_LIN_VEL_XY)
-        clipped_vel_z = np.clip(state[12], -MAX_LIN_VEL_Z, MAX_LIN_VEL_Z)
-
-        if self.GUI:
-            self._clipAndNormalizeStateWarning(state,
-                                               clipped_pos_xy,
-                                               clipped_rel_pos_z,
-                                               clipped_rp,
-                                               clipped_vel_xy,
-                                               clipped_vel_z
-                                               )
-
-        normalized_pos_xy = clipped_pos_xy # / MAX_XY not clipping xy since we only consider relative pos.
-        normalized_pos_z = clipped_rel_pos_z # / MAX_Z
-        normalized_rp = clipped_rp / MAX_PITCH_ROLL
-        normalized_y = state[9] / np.pi # No reason to clip
-        normalized_vel_xy = clipped_vel_xy / MAX_LIN_VEL_XY
-        normalized_vel_z = clipped_vel_z / MAX_LIN_VEL_XY
-        normalized_ang_vel = state[13:16] # /np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
-        normalized_rpm = state[16:20] / self.MAX_RPM
-        last_action = self.last_step_action
-
-        norm_and_clipped = np.hstack([normalized_pos_xy,
-                                      normalized_pos_z,
-                                      state[3:7],
-                                      normalized_rp,
-                                      normalized_y,
-                                      normalized_vel_xy,
-                                      normalized_vel_z,
-                                      normalized_ang_vel,
-                                      last_action
-                                      ]).reshape(20,)
-
-        return norm_and_clipped
+    # def _clipAndNormalizeState(self,
+    #                            state
+    #                            ):
+    #     """Normalizes a drone's state to the [-1,1] range.
+    #
+    #     Parameters
+    #     ----------
+    #     state : ndarray
+    #         (20,)-shaped array of floats containing the non-normalized state of a single drone.
+    #
+    #     Returns
+    #     -------
+    #     ndarray
+    #         (20,)-shaped array of floats containing the normalized state of a single drone.
+    #
+    #     """
+    #
+    #     MAX_PITCH_ROLL = np.pi # Full range
+    #
+    #     clipped_pos_xy = np.clip(state[0:2], -MAX_XY, MAX_XY)
+    #     clipped_rel_pos_z = np.clip(state[2] - self.goal[2], -MAX_Z, MAX_Z)
+    #     clipped_rp = np.clip(state[7:9], -MAX_PITCH_ROLL, MAX_PITCH_ROLL)
+    #     clipped_vel_xy = np.clip(state[10:12], -MAX_LIN_VEL_XY, MAX_LIN_VEL_XY)
+    #     clipped_vel_z = np.clip(state[12], -MAX_LIN_VEL_Z, MAX_LIN_VEL_Z)
+    #
+    #     if self.GUI:
+    #         self._clipAndNormalizeStateWarning(state,
+    #                                            clipped_pos_xy,
+    #                                            clipped_rel_pos_z,
+    #                                            clipped_rp,
+    #                                            clipped_vel_xy,
+    #                                            clipped_vel_z
+    #                                            )
+    #
+    #     normalized_pos_xy = clipped_pos_xy # / MAX_XY not clipping xy since we only consider relative pos.
+    #     normalized_pos_z = clipped_rel_pos_z # / MAX_Z
+    #     normalized_rp = clipped_rp / MAX_PITCH_ROLL
+    #     normalized_y = state[9] / np.pi # No reason to clip
+    #     normalized_vel_xy = clipped_vel_xy / MAX_LIN_VEL_XY
+    #     normalized_vel_z = clipped_vel_z / MAX_LIN_VEL_XY
+    #     normalized_ang_vel = state[13:16] # /np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
+    #     normalized_rpm = state[16:20] / self.MAX_RPM
+    #     last_action = self.last_step_action
+    #
+    #     norm_and_clipped = np.hstack([normalized_pos_xy,
+    #                                   normalized_pos_z,
+    #                                   state[3:7],
+    #                                   normalized_rp,
+    #                                   normalized_y,
+    #                                   normalized_vel_xy,
+    #                                   normalized_vel_z,
+    #                                   normalized_ang_vel,
+    #                                   last_action
+    #                                   ]).reshape(20,)
+    #
+    #     return norm_and_clipped
     
     ################################################################################
     
@@ -370,8 +364,16 @@ class HoverAviaryDelay(HoverAviary):
             commanded to the 4 motors of each drone.
 
         """
+
+
         if self.ACT_TYPE == ActionType.RPM:
-            return np.array(self.HOVER_RPM * (1+RPM_FACTOR * action))
+            rpm_input = action * self.MAX_RPM
+            self.rpm = (1 / self.CTRL_FREQ / self.time_constant) * (rpm_input[np.newaxis, :] - self.rpm) + self.rpm
+            self.control_hist.append(action)
+            return self.rpm
+        elif self.ACT_TYPE == ActionType.RAW:
+            # RAW for force input
+            return np.array(np.sqrt(0.25 * self.MAX_THRUST * (0.5 * (1 + action)) / self.KF ))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
             m1 = t - r / 2 + p / 2 + y
@@ -379,7 +381,7 @@ class HoverAviaryDelay(HoverAviary):
             m3 = t + r / 2 - p / 2 + y
             m4 = t + r / 2 + p / 2 - y
             rpm_normalized =  np.array([m1, m2, m3, m4])
-            return np.array(self.HOVER_RPM * (1+0.5*rpm_normalized))
+            return np.array(self.HOVER_RPM * (1+RPM_FACTOR*rpm_normalized))
         elif self.ACT_TYPE == ActionType.PID:
             state = self._getDroneStateVector(0)
             next_pos = self._calculateNextStep(
@@ -395,12 +397,13 @@ class HoverAviaryDelay(HoverAviary):
                                                  target_pos=next_pos
                                                  )
             rpm_input = rpm
+            self.rpm = (1 / self.CTRL_FREQ / self.time_constant) * (rpm_input[np.newaxis, :] - self.rpm) + self.rpm
+            self.control_hist.append(rpm_input / self.MAX_RPM)
+            return np.array(self.HOVER_RPM * (1 + RPM_FACTOR * self.rpm))
         else:
             # print("[ERROR] in BaseSingleAgentAviary._preprocessAction()")
             raise NotImplementedError("[ERROR] in BaseSingleAgentAviary._preprocessAction()")
-        self.rpm = (1 / self.CTRL_FREQ / self.time_constant) * (rpm_input[np.newaxis, :] - self.rpm) + self.rpm
-        self.control_hist.append(rpm_input / self.MAX_RPM)
-        return self.rpm
+
 
     def _physics(self,
                  rpm,
@@ -475,7 +478,7 @@ class HoverAviaryDelay(HoverAviary):
         self._startVideoRecording()
         #### RESET THE RPM #########################################
         self._reset_rpm(seed)
-        self._reset_hist()
+        self.reset_errors()
         #### Return the initial observation ########################
         initial_obs = self._computeObs()
         initial_info = self._computeInfo()
