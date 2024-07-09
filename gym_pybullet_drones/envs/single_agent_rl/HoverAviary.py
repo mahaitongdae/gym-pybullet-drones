@@ -222,11 +222,11 @@ class HoverAviary(BaseSingleAgentAviary):
         #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
         # elif self.curriculum_stage == 2:
         rew_pos = - 2.5 * np.linalg.norm(self.goal - state[0:3])
-        rew_rpy = - 1.5 * np.linalg.norm(state[7:9])
+        rew_rpy = - 0.1 * np.linalg.norm(state[7:9])
         rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
         rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
         rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
-        rew_action_diff = -1. * np.linalg.norm(
+        rew_action_diff = -0. * np.linalg.norm(
             (self.last_clipped_action[0] - self.last_step_action) / (2 * RPM_FACTOR * self.HOVER_RPM))
         self.rew_info = {'rew_pos': rew_pos,
                          'rew_rpy': rew_rpy,
