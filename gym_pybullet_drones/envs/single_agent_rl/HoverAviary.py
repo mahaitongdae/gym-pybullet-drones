@@ -234,7 +234,7 @@ class HoverAviary(BaseSingleAgentAviary):
                          'rew_ang_vel': rew_ang_vel,
                          'rew_action': rew_action,
                          'rew_action_diff': rew_action_diff}
-        return 2 + (rew_pos +
+        return 0 + (rew_pos +
                     rew_rpy +
                     rew_lin_vel +
                     rew_ang_vel +
