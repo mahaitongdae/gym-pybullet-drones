@@ -39,13 +39,13 @@ class DSLPIDControl(BaseControl):
         self.D_COEFF_FOR = np.array([.2, .2, .5])
         self.P_COEFF_TOR = np.array([70000., 70000., 60000.])
         self.I_COEFF_TOR = np.array([.0, .0, 500.])
-        self.D_COEFF_TOR = np.array([20000., 20000., 12000.])
+        self.D_COEFF_TOR = np.array([20000., 20000., 12000.]) #
         self.PWM2RPM_SCALE = 0.2685
         self.PWM2RPM_CONST = 4070.3
         self.MIN_PWM = 20000
         self.MAX_PWM = 65535
         if self.DRONE_MODEL == DroneModel.CF2X:
-            self.MIXER_MATRIX = np.array([ 
+            self.MIXER_MATRIX = np.array([
                                     [-.5, -.5, -1],
                                     [-.5,  .5,  1],
                                     [.5, .5, -1],
@@ -243,8 +243,10 @@ class DSLPIDControl(BaseControl):
         w,x,y,z = target_quat
         target_rotation = (Rotation.from_quat([w, x, y, z])).as_matrix()
         rot_matrix_e = np.dot((target_rotation.transpose()),cur_rotation) - np.dot(cur_rotation.transpose(),target_rotation)
-        rot_e = np.array([rot_matrix_e[2, 1], rot_matrix_e[0, 2], rot_matrix_e[1, 0]]) 
+        rot_e = np.array([rot_matrix_e[2, 1], rot_matrix_e[0, 2], rot_matrix_e[1, 0]])
+        rot_e[1] = -1 * rot_e[1]
         rpy_rates_e = target_rpy_rates - (cur_rpy - self.last_rpy)/control_timestep
+        rpy_rates_e[1] = -1 * rpy_rates_e[1]
         self.last_rpy = cur_rpy
         self.integral_rpy_e = self.integral_rpy_e - rot_e*control_timestep
         self.integral_rpy_e = np.clip(self.integral_rpy_e, -1500., 1500.)
