@@ -1,7 +1,8 @@
 import os
 import numpy as np
 import xml.etree.ElementTree as etxml
-import pkg_resources
+# import pkg_resources
+import importlib.resources
 
 from gym_pybullet_drones.utils.enums import DroneModel
 
@@ -199,7 +200,9 @@ class BaseControl(object):
         """
         #### Get the XML tree of the drone model to control ########
         URDF = self.DRONE_MODEL.value + ".urdf"
-        path = pkg_resources.resource_filename('gym_pybullet_drones', 'assets/'+URDF)
+        # path = pkg_resources.resource_filename('gym_pybullet_drones', 'assets/'+URDF)
+        with importlib.resources.path('gym_pybullet_drones.assets', URDF) as asset_path:
+            path = str(asset_path)
         URDF_TREE = etxml.parse(path).getroot()
         #### Find and return the desired parameter #################
         if parameter_name == 'm':
