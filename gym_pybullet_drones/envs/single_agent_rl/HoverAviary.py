@@ -67,7 +67,7 @@ class HoverAviary(BaseSingleAgentAviary):
                  record=False,
                  obs: ObservationType = ObservationType.KIN,
                  act: ActionType = ActionType.PWM,
-                 add_action_obs=False,
+                 add_action_obs=True,
                  add_pd=False
                  ):
         """Initialization of a single agent RL environment.
@@ -245,7 +245,7 @@ class HoverAviary(BaseSingleAgentAviary):
         rew_rpy = - 0.1 * np.linalg.norm(state[7:10])
         rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
         rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
-        rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
+        rew_action = - 0.1 * np.linalg.norm(self.raw_action[0]) # self.last_clipped_action[0] / self.MAX_RPM
         rew_action_diff = -0.1 * np.linalg.norm(
             (self.raw_action[0] - self.last_action[0]) ) # / (2 * RPM_FACTOR * self.HOVER_RPM)
         self.rew_info = {'rew_pos': rew_pos,
@@ -377,17 +377,20 @@ class HoverAviary(BaseSingleAgentAviary):
         # normalized_ang_vel = state[13:16] # /np.linalg.norm(state[13:16]) if np.linalg.norm(state[13:16]) != 0 else state[13:16]
         # normalized_rpm = state[16:20] / self.MAX_RPM
         # last_action = self.last_step_action
+        state_buf = [clipped_pos_xy,  # x, y
+                      clipped_rel_pos_z,  # z_error
+                      state[3:7],  # quat
+                      clipped_rp,  # row, pitch
+                      state[9],  # yaw
+                      clipped_vel_xy,  # vel xy
+                      clipped_vel_z,  # vel z
+                      state[13:16],  # angular vel
+                      # last_action
+                        ]
+        if self.add_action_obs:
+            state_buf.append(self.last_action[0])
 
-        norm_and_clipped = np.hstack([clipped_pos_xy,  # x, y
-                                      clipped_rel_pos_z,  # z_error
-                                      state[3:7],  # quat
-                                      clipped_rp,  # row, pitch
-                                      state[9],  # yaw
-                                      clipped_vel_xy,  # vel xy
-                                      clipped_vel_z,  # vel z
-                                      state[13:16],  # angular vel
-                                      # last_action
-                                      ]).reshape(16, )
+        norm_and_clipped = np.hstack(state_buf)
 
         return norm_and_clipped
 

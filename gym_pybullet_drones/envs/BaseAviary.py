@@ -13,6 +13,7 @@ import pybullet as p
 import pybullet_data
 import gymnasium as gym
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ImageType
+import copy
 
 
 class BaseAviary(gym.Env):
@@ -338,7 +339,7 @@ class BaseAviary(gym.Env):
                                                           ) for i in range(self.NUM_DRONES)]
         #### Save, preprocess, and clip the action to the max. RPM #
         else:
-            self._saveLastAction(action)
+            self.raw_action = copy.deepcopy(action)
             clipped_action = np.reshape(self._preprocessAction(action), (self.NUM_DRONES, 4))
             ## Here is the RPM, number.
         #### Repeat for as many as the aggregate physics steps #####
@@ -380,6 +381,7 @@ class BaseAviary(gym.Env):
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
         info = self._computeInfo()
+        self._saveLastAction(self.raw_action)
         #### Advance the step counter ##############################
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return obs, reward, terminated, truncated, info
@@ -467,7 +469,7 @@ class BaseAviary(gym.Env):
         self.GUI_INPUT_TEXT = -1*np.ones(self.NUM_DRONES)
         self.USE_GUI_RPM=False
         self.last_input_switch = 0
-        self.last_action = -1*np.ones((self.NUM_DRONES, 4))
+        self.last_action = np.zeros((self.NUM_DRONES, 4))
         self.last_clipped_action = np.zeros((self.NUM_DRONES, 4))
         self.gui_input = np.zeros(4)
         #### Initialize the drones kinemaatic information ##########
