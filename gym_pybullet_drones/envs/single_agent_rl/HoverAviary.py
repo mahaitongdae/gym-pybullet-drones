@@ -10,6 +10,7 @@ from copy import deepcopy
 
 MAX_LIN_VEL_XY = 3
 MAX_LIN_VEL_Z = 1
+MAX_ANG_VEL = 2.
 MAX_XY = 1.
 MAX_Z = 1.
 MAX_PITCH_ROLL = np.pi  # Full range
@@ -21,27 +22,33 @@ MAX_DIFF_RPY_ERROR = 1
 RPM_FACTOR = 0.2
 UINT16_MAX = 65535
 
-state_space_low = [-MAX_XY, -MAX_XY, 0.0,
-                   0.0, 0.0, 0.0, 0.0,
-                   - MAX_PITCH_ROLL, -MAX_PITCH_ROLL, -np.pi,
-                   -MAX_LIN_VEL_XY, -MAX_LIN_VEL_XY, -MAX_LIN_VEL_Z,
-                   -MAX_INT_POS_ERROR, -MAX_INT_POS_ERROR, -MAX_INT_POS_ERROR,
-                   -MAX_DIFF_POS_ERROR_XY, -MAX_DIFF_POS_ERROR_XY, -MAX_DIFF_POS_ERROR_Z,
-                   -MAX_LIN_VEL_XY, -MAX_LIN_VEL_XY, -MAX_LIN_VEL_Z,
-                   -MAX_INT_RPY_ERROR, -MAX_INT_RPY_ERROR, -MAX_INT_RPY_ERROR,
-                   -MAX_DIFF_RPY_ERROR, -MAX_DIFF_RPY_ERROR, -MAX_DIFF_RPY_ERROR,
+state_low = [-MAX_XY, -MAX_XY, 0.0,  # XYZ
+                   0.0, 0.0, 0.0, 0.0,  # Quat
+                   - MAX_PITCH_ROLL, -MAX_PITCH_ROLL, -np.pi,  # RPY
+                   -MAX_LIN_VEL_XY, -MAX_LIN_VEL_XY, -MAX_LIN_VEL_Z,  #Lin vel
+                   -MAX_ANG_VEL, -MAX_ANG_VEL, -MAX_ANG_VEL,  # ANG_VEL
                    ]
 
-state_space_high = [MAX_XY, MAX_XY, 2.0,
-                   1.0, 1.0, 1.0, 1.0,
-                   MAX_PITCH_ROLL, MAX_PITCH_ROLL, np.pi,
-                   MAX_LIN_VEL_XY, MAX_LIN_VEL_XY, MAX_LIN_VEL_Z,
-                   MAX_INT_POS_ERROR, MAX_INT_POS_ERROR, MAX_INT_POS_ERROR,
+action_low = [-1., -1., -1., -1.,]
+
+int_dif_low = [-MAX_INT_POS_ERROR, -MAX_INT_POS_ERROR, -MAX_INT_POS_ERROR, #
+                   -MAX_DIFF_POS_ERROR_XY, -MAX_DIFF_POS_ERROR_XY, -MAX_DIFF_POS_ERROR_Z,
+                   -MAX_INT_RPY_ERROR, -MAX_INT_RPY_ERROR, -MAX_INT_RPY_ERROR,
+                   -MAX_DIFF_RPY_ERROR, -MAX_DIFF_RPY_ERROR, -MAX_DIFF_RPY_ERROR,]
+
+state_high = [MAX_XY, MAX_XY, 2.0,
+                    1.0, 1.0, 1.0, 1.0,
+                    MAX_PITCH_ROLL, MAX_PITCH_ROLL, np.pi,
+                    MAX_LIN_VEL_XY, MAX_LIN_VEL_XY, MAX_LIN_VEL_Z,
+                    MAX_ANG_VEL, MAX_ANG_VEL, MAX_ANG_VEL,
+                    ]
+
+action_high = [1., 1., 1., 1.,]
+
+int_dif_high = [ MAX_INT_POS_ERROR, MAX_INT_POS_ERROR, MAX_INT_POS_ERROR,
                    MAX_DIFF_POS_ERROR_XY, MAX_DIFF_POS_ERROR_XY, MAX_DIFF_POS_ERROR_Z,
-                   MAX_LIN_VEL_XY, MAX_LIN_VEL_XY, MAX_LIN_VEL_Z,
                    MAX_INT_RPY_ERROR, MAX_INT_RPY_ERROR, MAX_INT_RPY_ERROR,
-                   MAX_DIFF_RPY_ERROR, MAX_DIFF_RPY_ERROR, MAX_DIFF_RPY_ERROR,
-                   ]
+                   MAX_DIFF_RPY_ERROR, MAX_DIFF_RPY_ERROR, MAX_DIFF_RPY_ERROR,]
 
 
 class HoverAviary(BaseSingleAgentAviary):
@@ -61,7 +68,7 @@ class HoverAviary(BaseSingleAgentAviary):
                  obs: ObservationType = ObservationType.KIN,
                  act: ActionType = ActionType.PWM,
                  add_action_obs=False,
-                 add_pd=True
+                 add_pd=False
                  ):
         """Initialization of a single agent RL environment.
 
@@ -132,6 +139,12 @@ class HoverAviary(BaseSingleAgentAviary):
 
         self.PWM2RPM_SCALE = 0.2685
         self.PWM2RPM_CONST = 4070.3
+        self.rew_buf = {'rew_pos': 0,
+                         'rew_rpy': 0,
+                         'rew_lin_vel': 0,
+                         'rew_ang_vel': 0,
+                         'rew_action': 0,
+                         'rew_action_diff': 0}
 
     def reset_errors(self):
         # self.pos_hist = deque(maxlen=hist_horizon)
@@ -179,6 +192,8 @@ class HoverAviary(BaseSingleAgentAviary):
         #### OBS SPACE OF SIZE 16 xyz 3, quat 4, rpy 3, vel_xyz 3, angle_vel_xyz 3 each
         # ret = np.hstack([obs[0:10], obs[10:13], obs[13:16]]).reshape(12, )
         ret = obs
+        if self.add_action_obs:
+            ret = np.hstack([ret, np.squeeze(self.last_action)])
         if self.add_pd:
             self.update_int_errors()
             # pos_error_i = -1 * np.array(self.pos_hist).sum(axis=0) / self.CTRL_FREQ
@@ -193,11 +208,14 @@ class HoverAviary(BaseSingleAgentAviary):
             return ret.astype('float32')
 
     def _observationSpace(self):
-        state_dim = 16
+        state_space_low = state_low
+        state_space_high = state_high
         if self.add_action_obs:
-            state_dim += 4
-        elif self.add_pd:
-            state_dim += 12
+            state_space_low += action_low
+            state_space_high += action_high
+        if self.add_pd:
+            state_space_low += int_dif_low
+            state_space_high += int_dif_high
         return spaces.Box(low=np.array(state_space_low),
                           high=np.array(state_space_high),
                           dtype=np.float32
@@ -224,19 +242,21 @@ class HoverAviary(BaseSingleAgentAviary):
         #     return np.exp(-1. * np.linalg.norm(self.goal-state[0:3]) - 0.01 * state[9] ** 2 )   # - 1 * np.linalg.norm(state[13:16])
         # elif self.curriculum_stage == 2:
         rew_pos = - 2.5 * np.linalg.norm(self.goal - state[0:3])
-        rew_rpy = - 0.1 * np.linalg.norm(state[7:9])
+        rew_rpy = - 0.1 * np.linalg.norm(state[7:10])
         rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
         rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
         rew_action = - 0.1 * np.linalg.norm(self.last_clipped_action[0] / self.MAX_RPM)
-        rew_action_diff = -0. * np.linalg.norm(
-            (self.last_clipped_action[0] - self.last_step_action) / (2 * RPM_FACTOR * self.HOVER_RPM))
+        rew_action_diff = -0.1 * np.linalg.norm(
+            (self.raw_action[0] - self.last_action[0]) ) # / (2 * RPM_FACTOR * self.HOVER_RPM)
         self.rew_info = {'rew_pos': rew_pos,
                          'rew_rpy': rew_rpy,
                          'rew_lin_vel': rew_lin_vel,
                          'rew_ang_vel': rew_ang_vel,
                          'rew_action': rew_action,
                          'rew_action_diff': rew_action_diff}
-        return 2 + (rew_pos +
+        for key, value in self.rew_buf.items():
+            self.rew_buf[key] = value + self.rew_info[key]
+        return np.exp(rew_pos +
                     rew_rpy +
                     rew_lin_vel +
                     rew_ang_vel +
@@ -306,7 +326,8 @@ class HoverAviary(BaseSingleAgentAviary):
         """
         ## RECORD LAST STEP ACTION HERE SINCE THIS IS THE LAST LINE IN SELF.STEP
         info = {}
-        info.update(self.rew_info)
+        info.update({'instant_rew': self.rew_info})
+        info.update({'episode_rew': self.rew_buf})
         info.update(self.done_info)
         self.last_step_action = self.last_clipped_action[0]
         return info  #### Calculated by the Deep Thought supercomputer in 7.5M years
@@ -428,7 +449,7 @@ class HoverAviary(BaseSingleAgentAviary):
         """
         # assert self.ACT_TYPE == ActionType.TRPY
         if self.ACT_TYPE == ActionType.RPM:
-            return action * self.MAX_RPM
+            return self.HOVER_RPM + action * RPM_FACTOR * self.MAX_RPM
         elif self.ACT_TYPE == ActionType.PWM:
             pwm = UINT16_MAX * action
             rpm = self.PWM2RPM_SCALE * pwm + self.PWM2RPM_CONST
@@ -438,13 +459,20 @@ class HoverAviary(BaseSingleAgentAviary):
             return np.array(np.sqrt(0.25 * self.MAX_THRUST * (0.5 * (1 + action)) / self.KF))
         elif self.ACT_TYPE == ActionType.TRPY:
             t, r, p, y = action
-            m1 = t - r / 2 + p / 2 + y
-            m2 = t - r / 2 - p / 2 - y
-            m3 = t + r / 2 - p / 2 + y
-            m4 = t + r / 2 + p / 2 - y
-            pwm = np.array([m1, m2, m3, m4])
-            capped_pwm = np.clip(pwm, 0, UINT16_MAX)
-            return capped_pwm
+            thrust = self.MAX_THRUST + t * (self.MAX_THRUST - self.GRAVITY) / 4
+            mr = r * self.MAX_XY_TORQUE
+            mp = p * self.MAX_XY_TORQUE
+            my = y * self.MAX_Z_TORQUE
+            fr = mr / (self.L / np.sqrt(2))
+            fp = mp / (self.L / np.sqrt(2))
+            fy = my / self.KM * self.KF
+            f1 = t - r / 2 + p / 2 + y
+            f2 = t - r / 2 - p / 2 - y
+            f3 = t + r / 2 - p / 2 + y
+            f4 = t + r / 2 + p / 2 - y
+            force = np.array([f1, f2, f3, f4]).clip(0.0, self.MAX_THRUST / 4)
+            rpm = np.sqrt(force / self.KF)
+            return rpm
         elif self.ACT_TYPE == ActionType.PID:
             state = self._getDroneStateVector(0)
             next_pos = self._calculateNextStep(
@@ -508,6 +536,9 @@ class HoverAviary(BaseSingleAgentAviary):
         #### Return the initial observation ########################
         initial_obs = self._computeObs()
         initial_info = self._computeInfo()
+
+        for key, _ in self.rew_buf.items():
+             self.rew_buf[key] = 0
         return initial_obs, initial_info
 
 
