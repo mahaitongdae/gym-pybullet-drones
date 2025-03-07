@@ -454,7 +454,7 @@ class HoverAviary(BaseSingleAgentAviary):
         if self.ACT_TYPE == ActionType.RPM:
             return self.HOVER_RPM + action * RPM_FACTOR * self.MAX_RPM
         elif self.ACT_TYPE == ActionType.PWM:
-            pwm = UINT16_MAX * action
+            pwm = UINT16_MAX * (action + 1) / 2
             rpm = self.PWM2RPM_SCALE * pwm + self.PWM2RPM_CONST
             return rpm
         elif self.ACT_TYPE == ActionType.RAW:
