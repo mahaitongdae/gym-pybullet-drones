@@ -131,7 +131,7 @@ class HoverAviary(BaseSingleAgentAviary):
                          )
 
         # self.curriculum_stage = curriculum_stage
-        self.EPISODE_LEN_SEC = 2
+        self.EPISODE_LEN_SEC = 4
         self.rew_info = {}
         self.done_info = {}
         self.last_step_action = np.zeros([4, ])
@@ -139,6 +139,7 @@ class HoverAviary(BaseSingleAgentAviary):
 
         self.PWM2RPM_SCALE = 0.2685
         self.PWM2RPM_CONST = 4070.3
+        self.HOVER_PWM = (self.HOVER_RPM - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE / 65535 * 2 - 1
         self.rew_buf = {'rew_pos': 0,
                          'rew_rpy': 0,
                          'rew_lin_vel': 0,
@@ -245,7 +246,7 @@ class HoverAviary(BaseSingleAgentAviary):
         rew_rpy = - 0.1 * np.linalg.norm(state[7:10])
         rew_lin_vel = - 0.05 * np.linalg.norm(state[10:13])
         rew_ang_vel = - 0.05 * np.linalg.norm(state[13:16])
-        rew_action = - 0.1 * np.linalg.norm(self.raw_action[0]) # self.last_clipped_action[0] / self.MAX_RPM
+        rew_action = - 0.1 * np.linalg.norm(self.raw_action[0] - self.HOVER_PWM) # self.last_clipped_action[0] / self.MAX_RPM
         rew_action_diff = -0.1 * np.linalg.norm(
             (self.raw_action[0] - self.last_action[0]) ) # / (2 * RPM_FACTOR * self.HOVER_RPM)
         self.rew_info = {'rew_pos': rew_pos,
