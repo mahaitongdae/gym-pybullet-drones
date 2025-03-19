@@ -453,7 +453,7 @@ class LoggerV1(Logger):
         self.timestamps[drone, current_counter] = timestamp
         #### Re-order the kinematic obs (of most Aviaries) #########
         self.states[drone, :, current_counter] = state
-        print(self.controls.shape)
+        # print(self.controls.shape)
         self.controls[drone, :, current_counter] = control
         self.counters[drone] = current_counter + 1
 
