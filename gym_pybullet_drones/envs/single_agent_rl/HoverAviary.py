@@ -182,6 +182,7 @@ class HoverAviary(BaseSingleAgentAviary):
 
     def _computeObs(self):
         state = self._getDroneStateVector(0)
+        state[:3] = state[:3] - self.goal
         state[8] = -1 * state[8]
         state[14] = -1 * state[14]
         # obs = self._clipAndNormalizeState(state)
